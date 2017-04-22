@@ -299,7 +299,7 @@ yes
 				ipv6libdir=/usr/local/v6/lib;
 				AC_DEFINE(INET6, 1, [true if you have IPv6])])
 			;;
-		cygwin)
+		cygwin|msys)
 			AC_EGREP_CPP(yes, [
 #include <netinet/in.h>
 #ifdef _CYGWIN_IN6_H
@@ -329,7 +329,7 @@ fi
 
 AC_MSG_CHECKING([whether to call shutdown on all sockets])
 case $host_os in
-	*cygwin* ) AC_MSG_RESULT(yes)
+	*cygwin*|*msys* ) AC_MSG_RESULT(yes)
                    AC_DEFINE(SHUTDOWN_ALL_SOCKETS, 1,
 			    [Define to 1 if sockets need to be shutdown])
 		   ;;
@@ -675,7 +675,7 @@ fi
 if test x"$ac_cv_func_posix_fallocate" = x"yes"; then
     AC_MSG_CHECKING([whether posix_fallocate is efficient])
     case $host_os in
-    *cygwin*)
+    *cygwin*|*msys*)
 	AC_MSG_RESULT(yes)
 	AC_DEFINE(HAVE_EFFICIENT_POSIX_FALLOCATE, 1,
 		  [Define if posix_fallocate is efficient (Cygwin)])
@@ -999,7 +999,7 @@ else
 	AC_DEFINE(HAVE_UNIXWARE_ACLS, 1, [true if you have UnixWare ACLs])
 	AC_DEFINE(SUPPORT_ACLS, 1, [Define to 1 to add support for ACLs])
 	;;
-    solaris*|*cygwin*)
+    solaris*)
 	AC_MSG_RESULT(Using solaris ACLs)
 	AC_DEFINE(HAVE_SOLARIS_ACLS, 1, [true if you have solaris ACLs])
 	AC_DEFINE(SUPPORT_ACLS, 1)
