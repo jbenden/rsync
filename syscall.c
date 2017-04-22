@@ -317,15 +317,93 @@ int do_mkstemp(char *template, mode_t perms)
 
 int do_stat(const char *fname, STRUCT_STAT *st)
 {
+#ifdef _IS_WINDOWS
+	ULARGE_INTEGER filesize;
+	WIN32_FILE_ATTRIBUTE_DATA fad;
+	char *szFname = (char*) fname;
+#ifdef __CYGWIN__
+	char *winpath = cygwin_create_path(CCP_POSIX_TO_WIN_A, fname);
+	if (!winpath) {
+		errno = ENOMEM;
+		return -1;
+	}
+	szFname = winpath;
+#endif
+
+	if (DEBUG_GTE(TIME, 1)) {
+		rprintf(FINFO, "do_stat on '%s'\n", fname);
+	}
+
+	if (GetFileAttributesExA(szFname, GetFileExInfoStandard, &fad) == 0) {
+		if (DEBUG_GTE(TIME, 1)) {
+			rprintf(FINFO, "do_stat on '%s' errored with error code %d\n", fname, GetLastError());
+		}
+		switch (GetLastError()) {
+		case ERROR_FILE_NOT_FOUND:
+		case ERROR_PATH_NOT_FOUND:
+			errno = ENOENT;
+			break;
+		case ERROR_ACCESS_DENIED:
+		case ERROR_NETWORK_ACCESS_DENIED:
+			errno = EACCES;
+			break;
+		case ERROR_INVALID_HANDLE:
+			errno = EBADF;
+			break;
+		case ERROR_TOO_MANY_OPEN_FILES:
+		case ERROR_OUTOFMEMORY:
+			errno = ENOMEM;
+			break;
+		case ERROR_BAD_LENGTH:
+			errno = ENAMETOOLONG;
+			break;
+		case ERROR_INVALID_PARAMETER:
+			errno = EFAULT;
+			break;
+		default:
+			errno = EINVAL;
+		}
+#ifdef __CYGWIN__
+		free(winpath);
+#endif
+		return -1;
+	}
+#ifdef __CYGWIN__
+	free(winpath);
+#endif
+
+	st->st_uid = 0;
+	st->st_gid = 0;
+	filesize.LowPart = fad.nFileSizeLow;
+	filesize.HighPart = fad.nFileSizeHigh;
+	st->st_size = filesize.QuadPart;
+	st->st_blocks = (st->st_size / 512ULL) + 1ULL;
+	st->st_blksize = 4096;
+	st->st_rdev = 0;
+	st->st_nlink = 0;
+	st->st_dev = 0;
+	st->st_ino = 0;
+	st->st_mode = ((fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0) ? S_IFDIR : S_IFREG;
+	st->st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+	st->st_atime = win32_filetime_to_epoch(&fad.ftLastAccessTime);
+	st->st_ctime = win32_filetime_to_epoch(&fad.ftCreationTime);
+	st->st_mtime = win32_filetime_to_epoch(&fad.ftLastWriteTime);
+
+	return 0;
+#else
 #ifdef USE_STAT64_FUNCS
 	return stat64(fname, st);
 #else
 	return stat(fname, st);
 #endif
+#endif
 }
 
 int do_lstat(const char *fname, STRUCT_STAT *st)
 {
+#ifdef _IS_WINDOWS1
+return do_stat(fname, st);
+#else
 #ifdef SUPPORT_LINKS
 # ifdef USE_STAT64_FUNCS
 	return lstat64(fname, st);
@@ -334,6 +412,7 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 # endif
 #else
 	return do_stat(fname, st);
+#endif
 #endif
 }
 

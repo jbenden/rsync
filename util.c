@@ -115,11 +115,36 @@ void print_child_argv(const char *prefix, char **cmd)
 	rprintf(FCLIENT, " (%d args)\n", cnt);
 }
 
+#ifdef _IS_WINDOWS
+time_t win32_filetime_to_epoch(const FILETIME *ft)
+{
+	ULARGE_INTEGER liFileTime;
+	ULONGLONG llSeconds;
+	time_t retval;
+
+	if (!ft) return (time_t) -1;
+
+	liFileTime.LowPart = ft->dwLowDateTime;
+	liFileTime.HighPart = ft->dwHighDateTime;
+	llSeconds = ((ULONGLONG) liFileTime.QuadPart / (ULONGLONG) _WIN_FILETIME_TO_UTC_EPOCH_DIVISOR - _WIN_SECONDS_TO_UNIX_EPOCH);
+	retval = (time_t) llSeconds;
+
+	if (llSeconds != (ULONGLONG) retval) {
+		// value exceed POSIX epoch time, fail
+		return (time_t) -1;
+	}
+
+	return retval;
+}
+#endif
+
 /* This returns 0 for success, 1 for a symlink if symlink time-setting
  * is not possible, or -1 for any other error. */
 int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 {
+#ifndef _IS_WINDOWS
 	static int switch_step = 0;
+#endif
 
 	if (DEBUG_GTE(TIME, 1)) {
 		rprintf(FINFO, "set modtime of %s to (%ld) %s",
@@ -127,6 +152,68 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 			asctime(localtime(&modtime)));
 	}
 
+#ifdef _IS_WINDOWS
+	HANDLE hFile;
+	ULARGE_INTEGER uliModtime;
+	FILETIME ftModtime;
+	DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL;
+	char *szFname = (char*) fname;
+#ifdef __CYGWIN__
+	char *winpath = cygwin_create_path(CCP_POSIX_TO_WIN_A, fname);
+	if (!winpath) {
+		errno = ENOMEM;
+		return -1;
+	}
+	szFname = winpath;
+#endif
+
+	if (S_ISDIR(mode)) {
+		dwFlagsAndAttributes = FILE_FLAG_BACKUP_SEMANTICS;
+	}
+
+	// convert POSIX epoch time to win32 FILETIME
+	uliModtime.QuadPart = (((ULONGLONG) modtime  + (ULONGLONG) _WIN_SECONDS_TO_UNIX_EPOCH) * (ULONGLONG) _WIN_FILETIME_TO_UTC_EPOCH_DIVISOR);
+	ftModtime.dwLowDateTime = uliModtime.LowPart;
+	ftModtime.dwHighDateTime = uliModtime.HighPart;
+
+	hFile = CreateFileA(szFname, // file to open
+		FILE_WRITE_ATTRIBUTES, // file opts
+		FILE_SHARE_WRITE, // share opts
+		NULL, //default security
+		OPEN_EXISTING, // existing file only
+		dwFlagsAndAttributes, // normal file
+		NULL);  // no attr. template
+
+	if (hFile == INVALID_HANDLE_VALUE) {
+		// error opening....
+		rprintf(FERROR, "failed to open inside of set modtime of %s to (%ld) %s: error code %d\n",
+			szFname, (long)modtime,
+			asctime(localtime(&modtime)),
+			GetLastError());
+#ifdef __CYGWIN__
+			free(winpath);
+#endif
+		return -1;
+	}
+
+	if (SetFileTime(hFile, NULL, NULL, &ftModtime) == 0) {
+		// error setting
+		rprintf(FERROR, "failed to set modtime of %s to (%ld) %s: error code %d\n",
+			szFname, (long)modtime,
+			asctime(localtime(&modtime)),
+			GetLastError());
+		CloseHandle(hFile);
+#ifdef __CYGWIN__
+		free(winpath);
+#endif
+		return -1;
+	}
+
+	CloseHandle(hFile);
+#ifdef __CYGWIN__
+	free(winpath);
+#endif
+#else
 	switch (switch_step) {
 #ifdef HAVE_UTIMENSAT
 #include "case_N.h"
@@ -168,6 +255,7 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 
 		return -1;
 	}
+#endif
 
 	return 0;
 }

@@ -1687,16 +1687,90 @@ static void interpret_stat_error(const char *fname, int is_dir)
 static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 			   int flags)
 {
-	struct dirent *di;
+#ifdef _IS_WINDOWS
+	WIN32_FIND_DATAA ffd;
+	LARGE_INTEGER filesize;
+	char szDir[MAX_PATH];
+	unsigned szDir_len;
+	HANDLE hFind = INVALID_HANDLE_VALUE;
+	DWORD dwError = 0;
+	char *szFname = (char*) fbuf;
+#ifdef __CYGWIN__
+	char *winpath = cygwin_create_path(CCP_POSIX_TO_WIN_A, fbuf);
+	if (!winpath) {
+		errno = ENOMEM;
+		return;
+	}
+	szFname = winpath;
+#endif
+#else
+	struct dirent *di = NULL;
+	DIR *d = NULL;
+#endif
 	unsigned remainder;
-	char *p;
-	DIR *d;
+	char *p = NULL;
 	int divert_dirs = (flags & FLAG_DIVERT_DIRS) != 0;
 	int start = flist->used;
 	int filter_level = f == -2 ? SERVER_FILTERS : ALL_FILTERS;
 
 	assert(flist != NULL);
 
+#ifdef _IS_WINDOWS
+	// subtract an additional two character for the later strlcat!
+	if ((szDir_len = strlcpy(szDir, szFname, MAX_PATH - _WIN_PATH_SIZE_INTERNAL - 2)) >= MAX_PATH - _WIN_PATH_SIZE_INTERNAL - 2) {
+		io_error |= IOERR_GENERAL;
+		rprintf(FERROR_XFER,
+			"filename overflows max-path len by %u: %s\n",
+			szDir_len - MAX_PATH - _WIN_PATH_SIZE_INTERNAL - 2 + 1, szFname);
+		errno = EOVERFLOW;
+#ifdef __CYGWIN__
+		free(winpath);
+#endif
+		return;
+	}
+
+	if ((szDir_len = strlcat(szDir, "\\*", MAX_PATH - _WIN_PATH_SIZE_INTERNAL)) >= MAX_PATH - _WIN_PATH_SIZE_INTERNAL) {
+		io_error |= IOERR_GENERAL;
+		rprintf(FERROR_XFER,
+			"filename overflows max-path len by %u: %s\n",
+			szDir_len - MAX_PATH - _WIN_PATH_SIZE_INTERNAL + 1, szDir);
+		errno = EOVERFLOW;
+#ifdef __CYGWIN__
+		free(winpath);
+#endif
+		return;
+	}
+
+	if (DEBUG_GTE(TIME, 3)) {
+		rprintf(FINFO,
+			"[debug] FindFirstFileA on '%s' from '%s'; current error code %d\n",
+			szDir,
+			fbuf,
+			GetLastError());
+	}
+
+#ifdef __CYGWIN__
+	free(winpath);
+#endif
+
+	SetLastError(ERROR_SUCCESS);
+
+	if ((hFind = FindFirstFileA(szDir, &ffd)) == INVALID_HANDLE_VALUE) {
+		if (GetLastError() == ERROR_FILE_NOT_FOUND) {
+			errno = ENOENT;
+			if (am_sender) /* Can abuse this for vanished error w/ENOENT: */
+				interpret_stat_error(fbuf, True);
+			return;
+		}
+		errno = EINVAL;
+		io_error |= IOERR_GENERAL;
+		rprintf(FERROR_XFER,
+			"unable to open '%s'; FindFirstFileA failed with error code %d\n",
+			szDir,
+			GetLastError());
+		return;
+	}
+#else
 	if (!(d = opendir(fbuf))) {
 		if (errno == ENOENT) {
 			if (am_sender) /* Can abuse this for vanished error w/ENOENT: */
@@ -1707,6 +1781,7 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		rsyserr(FERROR_XFER, errno, "opendir %s failed", full_fname(fbuf));
 		return;
 	}
+#endif
 
 	p = fbuf + len;
 	if (len == 1 && *fbuf == '/')
@@ -1718,9 +1793,39 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 	} else
 		remainder = 0;
 
+#ifdef _IS_WINDOWS
+	for (errno = 0, dwError = GetLastError(); dwError == ERROR_SUCCESS; dwError = (FindNextFileA(hFind, &ffd) != 0 ? ERROR_SUCCESS : GetLastError())) {
+#else
 	for (errno = 0, di = readdir(d); di; errno = 0, di = readdir(d)) {
+#endif
 		unsigned name_len;
+#ifdef _IS_WINDOWS
+		STRUCT_STAT sst;
+		sst.st_uid = 0;
+		sst.st_gid = 0;
+		filesize.LowPart = ffd.nFileSizeLow;
+		filesize.HighPart = ffd.nFileSizeHigh;
+		sst.st_size = filesize.QuadPart;
+		sst.st_blocks = (sst.st_size / 512ULL) + 1ULL;
+		sst.st_blksize = 4096;
+		sst.st_rdev = 0;
+		sst.st_nlink = 0;
+		sst.st_dev = 0;
+		sst.st_ino = 0;
+		sst.st_mode = ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) ? S_IFDIR : S_IFREG;
+		sst.st_mode = ((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) ? S_IFLNK : sst.st_mode;
+		sst.st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+		sst.st_atime = win32_filetime_to_epoch(&ffd.ftLastAccessTime);
+		sst.st_ctime = win32_filetime_to_epoch(&ffd.ftCreationTime);
+		sst.st_mtime = win32_filetime_to_epoch(&ffd.ftLastWriteTime);
+		char *dname = ffd.cFileName;
+
+		if (DEBUG_GTE(TIME, 1)) {
+			rprintf(FINFO, "path %s with mode 0x%x and mtime %ld (dir: %d)\n", dname, sst.st_mode, sst.st_mtime, ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0) ? 1 : 0);
+		}
+#else
 		char *dname = d_name(di);
+#endif
 		if (dname[0] == '.' && (dname[1] == '\0'
 		    || (dname[1] == '.' && dname[2] == '\0')))
 			continue;
@@ -1743,17 +1848,39 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 			continue;
 		}
 
+#ifdef _IS_WINDOWS
+		send_file_name(f, flist, fbuf, &sst, flags, filter_level);
+#else
 		send_file_name(f, flist, fbuf, NULL, flags, filter_level);
+#endif
 	}
 
 	fbuf[len] = '\0';
 
+#ifdef _IS_WINDOWS
+	if (DEBUG_GTE(TIME, 3)) {
+		rprintf(FINFO,
+			"[debug] FindFirstFileA loop finished with error code %d inside '%s'\n",
+			GetLastError(),
+			full_fname(fbuf));
+	}
+
+	if (dwError != 0 && dwError != ERROR_NO_MORE_FILES) {
+		io_error |= IOERR_GENERAL;
+		rsyserr(FERROR_XFER, dwError, "FindNextFileA(%s)", full_fname(fbuf));
+	}
+#else
 	if (errno) {
 		io_error |= IOERR_GENERAL;
 		rsyserr(FERROR_XFER, errno, "readdir(%s)", full_fname(fbuf));
 	}
+#endif
 
+#ifdef _IS_WINDOWS
+	FindClose(hFind);
+#else
 	closedir(d);
+#endif
 
 	if (f >= 0 && recurse && !divert_dirs) {
 		int i, end = flist->used - 1;

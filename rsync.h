@@ -1007,6 +1007,21 @@ typedef struct {
 #define ACL_READY(sx) ((sx).acc_acl != NULL)
 #define XATTR_READY(sx) ((sx).xattr != NULL)
 
+#if defined(_WIN32) || defined(_WIN64)
+#define _IS_WINDOWS
+#define _WIN_FILETIME_TO_UTC_EPOCH_DIVISOR 10000000ULL
+#define _WIN_SECONDS_TO_UNIX_EPOCH 11644473600ULL
+#define _WIN_PATH_SIZE_INTERNAL 12
+
+#include <windows.h>
+#ifdef __CYGWIN__
+#include <sys/cygwin.h>
+#endif
+
+/* Forward Declarations */
+extern time_t win32_filetime_to_epoch(const FILETIME *ft);
+#endif
+
 #include "proto.h"
 
 #ifndef SUPPORT_XATTRS

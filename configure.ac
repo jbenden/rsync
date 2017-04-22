@@ -336,6 +336,27 @@ case $host_os in
 	       * ) AC_MSG_RESULT(no);;
 esac
 
+AC_ARG_WITH(w32api-include-path,
+	AS_HELP_STRING([--with-w32api-include-path=PATH],[set location of w32api headers (default: /usr/include/w32api)]),
+	[ W32API_INCLUDE_PATH="$with_w32api_include_path" ],
+	[ W32API_INCLUDE_PATH="/usr/include/w32api" ])
+
+AC_CHECK_SIZEOF([void*])
+
+AC_MSG_CHECKING([whether platform should use Win32 API])
+case $host_os in
+	*cygwin*|*msys* ) AC_MSG_RESULT(yes)
+				AS_IF([test "$ac_cv_sizeof_voidp" -eq 4],
+					[AC_DEFINE(_WIN32, 1,
+			    		[Define to 1 if Win32 API should be used])],
+					[AC_DEFINE(_WIN64, 1,
+			    		[Define to 1 if Win64 API should be used])])
+				dnl Include W32API Headers for Cygwin and Msys
+				CFLAGS="-I${W32API_INCLUDE_PATH} $CFLAGS"
+		   ;;
+	       * ) AC_MSG_RESULT(no);;
+esac
+
 AC_C_BIGENDIAN
 AC_HEADER_DIRENT
 AC_HEADER_TIME
