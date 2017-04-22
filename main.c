@@ -94,6 +94,8 @@ extern char backup_dir_buf[MAXPATHLEN];
 extern char *basis_dir[MAX_BASIS_DIRS+1];
 extern struct file_list *first_flist;
 extern filter_rule_list daemon_filter_list;
+extern BOOL prio_enabled;
+extern BOOL prio_was_enabled;
 
 uid_t our_uid;
 gid_t our_gid;
@@ -1640,6 +1642,18 @@ int main(int argc,char *argv[])
 		usage(FERROR);
 		exit_cleanup(RERR_SYNTAX);
 	}
+
+#ifdef _IS_WINDOWS
+	if (prio_enabled == True) {
+		if (!SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN)) {
+			rprintf(FINFO,
+				"Failed to set priority class of process (%d)\n",
+				GetLastError());
+		} else {
+			prio_was_enabled = True;
+		}
+	}
+#endif
 
 	if (am_server) {
 		set_nonblocking(STDIN_FILENO);

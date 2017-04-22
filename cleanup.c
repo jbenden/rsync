@@ -33,6 +33,7 @@ extern int protocol_version;
 extern int output_needs_newline;
 extern char *partial_dir;
 extern char *logfile_name;
+extern BOOL prio_was_enabled;
 
 BOOL shutting_down = False;
 BOOL flush_ok_after_signal = False;
@@ -104,6 +105,17 @@ NORETURN void _exit_cleanup(int code, const char *file, int line)
 	static int exit_code = 0, exit_line = 0;
 	static const char *exit_file = NULL;
 	static int first_code = 0;
+
+#ifdef _IS_WINDOWS
+	if (prio_was_enabled == True) {
+		prio_was_enabled = False;
+		if (!SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_END)) {
+			rprintf(FINFO,
+				"[%s] _exit_cleanup(code=%d, file=%s, line=%d): Failed to end background mode (%d)\n",
+				who_am_i(), code, file, line, GetLastError());
+		}
+	}
+#endif
 
 	SIGACTION(SIGUSR1, SIG_IGN);
 	SIGACTION(SIGUSR2, SIG_IGN);

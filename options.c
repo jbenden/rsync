@@ -127,6 +127,8 @@ int delay_updates = 0;
 long block_size = 0; /* "long" because popt can't set an int32. */
 char *skip_compress = NULL;
 item_list dparam_list = EMPTY_ITEM_LIST;
+BOOL prio_enabled = False;
+BOOL prio_was_enabled = False;
 
 /** Network address family. **/
 int default_af_hint
@@ -793,6 +795,7 @@ void usage(enum logcode F)
   rprintf(F,"     --password-file=FILE    read daemon-access password from FILE\n");
   rprintf(F,"     --list-only             list the files instead of copying them\n");
   rprintf(F,"     --bwlimit=RATE          limit socket I/O bandwidth\n");
+  rprintf(F,"     --low-prio              set process priority to background (win32 only)\n");
 #ifdef HAVE_SETVBUF
   rprintf(F,"     --outbuf=N|L|B          set output buffering to None, Line, or Block\n");
 #endif
@@ -1044,6 +1047,7 @@ static struct poptOption long_options[] = {
   {"checksum-seed",    0,  POPT_ARG_INT,    &checksum_seed, 0, 0, 0 },
   {"server",           0,  POPT_ARG_NONE,   0, OPT_SERVER, 0, 0 },
   {"sender",           0,  POPT_ARG_NONE,   0, OPT_SENDER, 0, 0 },
+  {"low-prio",         0,  POPT_ARG_VAL,    &prio_enabled, True, 0, 0 },
   /* All the following options switch us into daemon-mode option-parsing. */
   {"config",           0,  POPT_ARG_STRING, 0, OPT_DAEMON, 0, 0 },
   {"daemon",           0,  POPT_ARG_NONE,   0, OPT_DAEMON, 0, 0 },
