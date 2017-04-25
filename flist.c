@@ -1689,6 +1689,7 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 {
 #ifdef _IS_WINDOWS
 	WIN32_FIND_DATAA ffd;
+	DWORD dwExcludeMask = FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_INTEGRITY_STREAM | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_SYSTEM;
 	LARGE_INTEGER filesize;
 	char szDir[MAX_PATH];
 	unsigned szDir_len;
@@ -1819,6 +1820,11 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		sst.st_ctime = win32_filetime_to_epoch(&ffd.ftCreationTime);
 		sst.st_mtime = win32_filetime_to_epoch(&ffd.ftLastWriteTime);
 		char *dname = ffd.cFileName;
+
+		if ((ffd.dwFileAttributes & dwExcludeMask) != 0) {
+			// Skip system files; cannot handle the remote side either
+			continue;
+		}
 
 		if (DEBUG_GTE(TIME, 1)) {
 			rprintf(FINFO, "path %s with mode 0x%x and mtime %ld (dir: %d)\n", dname, sst.st_mode, sst.st_mtime, ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0) ? 1 : 0);
