@@ -1818,8 +1818,15 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		sst.st_ino = 0;
 		sst.st_mode = ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) ? S_IFDIR : S_IFREG;
 		sst.st_mode = ((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) ? S_IFLNK : sst.st_mode;
-		// TODO: FILE_ATTRIBUTE_READONLY
-		sst.st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+		if (ffd.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+			if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+				sst.st_mode += ((S_IRUSR | S_IXUSR) | (S_IRGRP | S_IXGRP) | (S_IROTH | S_IXOTH));
+			} else {
+				sst.st_mode += (S_IRUSR | S_IRGRP | S_IROTH);
+			}
+		} else {
+			sst.st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+		}
 		sst.st_atime = win32_filetime_to_epoch(&ffd.ftLastAccessTime);
 		sst.st_ctime = win32_filetime_to_epoch(&ffd.ftCreationTime);
 		sst.st_mtime = win32_filetime_to_epoch(&ffd.ftLastWriteTime);
