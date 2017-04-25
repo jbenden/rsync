@@ -24,6 +24,24 @@
 #include "ifuncs.h"
 #include "itypes.h"
 #include "inums.h"
+#include <stdlib.h>
+#ifdef _IS_WINDOWS
+# include <stdarg.h>
+# include <stdio.h>
+# include <wtypes.h>
+# include <wchar.h>
+
+# ifdef __CYGWIN__
+#  undef  _vsnprintf
+#  define _vsnprintf vsnprintf
+#  undef  _vsnwprintf
+#  define _vsnwprintf vswprintf
+# endif
+
+# define __CRT__NO_INLINE
+# define __CRT_STRSAFE_IMPL
+# include <strsafe.h>
+#endif
 
 extern int dry_run;
 extern int module_id;
@@ -136,6 +154,137 @@ time_t win32_filetime_to_epoch(const FILETIME *ft)
 
 	return retval;
 }
+
+wchar_t* win32_utf8_to_wide(const char *str)
+{
+	// sanity check
+	if (!str) return NULL;
+
+	size_t szWideLength;
+	if ((szWideLength = MultiByteToWideChar(CP_UTF8,
+											MB_ERR_INVALID_CHARS,
+											str,
+											-1, // process entire string, including NULL
+											NULL,
+											0)) == 0) {
+		// error, could not calculate length in bytes
+		rprintf(FINFO, "invalid conversion to wide character; could not determine length of '%s' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		return NULL;
+	}
+
+	// allocate buffer
+	wchar_t *retval = calloc(szWideLength * sizeof(wchar_t), 1);
+	if (!retval) return NULL;
+
+	// perform conversion
+	if (MultiByteToWideChar(CP_UTF8,
+							MB_ERR_INVALID_CHARS,
+							str,
+							-1,
+							retval,
+							szWideLength) == 0) {
+		// error performing actual conversion.
+		rprintf(FINFO, "invalid conversion to wide character; could not convert '%s' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		free(retval);
+		return NULL;
+	}
+
+	// return
+	return retval;
+}
+
+char* win32_wide_to_utf8(const wchar_t *str)
+{
+	// sanity check
+	if (!str) return NULL;
+
+	size_t szWideLength;
+	if ((szWideLength = WideCharToMultiByte(CP_UTF8,
+											WC_ERR_INVALID_CHARS,
+											str,
+											-1, // process entire string, including NULL
+											NULL,
+											0,
+											NULL,
+											NULL)) == 0) {
+		// error, could not calculate length in bytes
+		rprintf(FINFO, "invalid conversion from wide character; could not determine length of '%S' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		return NULL;
+	}
+
+	// allocate buffer
+	char *retval = calloc(szWideLength * sizeof(char), 1);
+	if (!retval) return NULL;
+
+	// perform conversion
+	if (WideCharToMultiByte(CP_UTF8,
+							WC_ERR_INVALID_CHARS,
+							str,
+							-1,
+							retval,
+							szWideLength,
+							NULL,
+							NULL) == 0) {
+		// error performing actual conversion.
+		rprintf(FINFO, "invalid conversion from wide character; could not convert '%S' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		free(retval);
+		return NULL;
+	}
+
+	// return
+	return retval;
+}
+
+wchar_t* win32_utf8_to_wide_path(const char *fname, int noUnicodeUNC)
+{
+	const wchar_t *szFmt = noUnicodeUNC == TRUE ? L"%S" : L"\\\\?\\%S";
+	const size_t szFmtExtraLen = noUnicodeUNC == TRUE ? 0 : 4;
+
+#ifdef __CYGWIN__
+	char *winpath = (char*) cygwin_create_path(CCP_POSIX_TO_WIN_A, fname);
+	if (!winpath) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	wchar_t *szFname = win32_utf8_to_wide(winpath);
+	free(winpath);
+#else
+	wchar_t *szFname = win32_utf8_to_wide(fname);
+#endif
+
+	// Prepend the unicode marker.
+	size_t szDir_len = wcslen(szFname) + szFmtExtraLen + 2;
+	wchar_t *szDir = calloc(szDir_len * sizeof(wchar_t), 1);
+	if (!szDir) {
+		free(szFname);
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	if (FAILED(StringCchPrintfW(szDir, szDir_len, szFmt, szFname)) == TRUE) {
+		rprintf(FERROR_XFER,
+			"filename failed StringCchPrintf prefixing: %S\n",
+			szFname);
+		errno = EOVERFLOW;
+		free(szFname);
+		free(szDir);
+		return NULL;
+	}
+
+	return szDir;
+}
 #endif
 
 /* This returns 0 for success, 1 for a symlink if symlink time-setting
@@ -157,15 +306,9 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 	ULARGE_INTEGER uliModtime;
 	FILETIME ftModtime;
 	DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL;
-	char *szFname = (char*) fname;
-#ifdef __CYGWIN__
-	char *winpath = cygwin_create_path(CCP_POSIX_TO_WIN_A, fname);
-	if (!winpath) {
-		errno = ENOMEM;
-		return -1;
-	}
-	szFname = winpath;
-#endif
+	wchar_t *szFname = win32_utf8_to_wide_path(fname, FALSE);
+
+	if (!szFname) { errno = ENOMEM; return -1; }
 
 	if (S_ISDIR(mode)) {
 		dwFlagsAndAttributes = FILE_FLAG_BACKUP_SEMANTICS;
@@ -176,7 +319,7 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 	ftModtime.dwLowDateTime = uliModtime.LowPart;
 	ftModtime.dwHighDateTime = uliModtime.HighPart;
 
-	hFile = CreateFileA(szFname, // file to open
+	hFile = CreateFileW(szFname, // file to open
 		FILE_WRITE_ATTRIBUTES, // file opts
 		FILE_SHARE_WRITE, // share opts
 		NULL, //default security
@@ -186,33 +329,28 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 
 	if (hFile == INVALID_HANDLE_VALUE) {
 		// error opening....
-		rprintf(FERROR, "failed to open inside of set modtime of %s to (%ld) %s: error code %d\n",
+		rprintf(FERROR, "failed to open inside of set modtime of %S to (%ld) %s: error code %d\n",
 			szFname, (long)modtime,
 			asctime(localtime(&modtime)),
 			GetLastError());
-#ifdef __CYGWIN__
-			free(winpath);
-#endif
+			free(szFname);
+		// TODO: Convert GetLastError to errno value!
 		return -1;
 	}
 
 	if (SetFileTime(hFile, NULL, NULL, &ftModtime) == 0) {
 		// error setting
-		rprintf(FERROR, "failed to set modtime of %s to (%ld) %s: error code %d\n",
+		rprintf(FERROR, "failed to set modtime of %S to (%ld) %s: error code %d\n",
 			szFname, (long)modtime,
 			asctime(localtime(&modtime)),
 			GetLastError());
 		CloseHandle(hFile);
-#ifdef __CYGWIN__
-		free(winpath);
-#endif
+		free(szFname);
 		return -1;
 	}
 
 	CloseHandle(hFile);
-#ifdef __CYGWIN__
-	free(winpath);
-#endif
+	free(szFname);
 #else
 	switch (switch_step) {
 #ifdef HAVE_UTIMENSAT

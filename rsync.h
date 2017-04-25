@@ -1013,13 +1013,35 @@ typedef struct {
 #define _WIN_SECONDS_TO_UNIX_EPOCH 11644473600ULL
 #define _WIN_PATH_SIZE_INTERNAL 12
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <windows.h>
+#include <wchar.h>
+#include <stringapiset.h>
+#ifndef WC_ERR_INVALID_CHARS
+#define WC_ERR_INVALID_CHARS 0x80
+#endif
 #ifdef __CYGWIN__
 #include <sys/cygwin.h>
 #endif
 
+#ifndef FILE_ATTRIBUTE_INTEGRITY_STREAM
+#define FILE_ATTRIBUTE_INTEGRITY_STREAM 0x8000
+#endif
+
+#ifndef FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+#define FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS 0x400000
+#endif
+
+#ifndef FILE_ATTRIBUTE_RECALL_ON_OPEN
+#define FILE_ATTRIBUTE_RECALL_ON_OPEN 0x40000
+#endif
+
 /* Forward Declarations */
 extern time_t win32_filetime_to_epoch(const FILETIME *ft);
+extern wchar_t* win32_utf8_to_wide(const char *str);
+extern char* win32_wide_to_utf8(const wchar_t *str);
+extern wchar_t* win32_utf8_to_wide_path(const char *fname, int noUnicodeUNC);
 #endif
 
 #include "proto.h"

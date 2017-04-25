@@ -25,6 +25,21 @@
 #include "rounding.h"
 #include "inums.h"
 #include "io.h"
+#ifdef _IS_WINDOWS
+# include <stdarg.h>
+# include <stdio.h>
+# include <wtypes.h>
+# include <wchar.h>
+
+# ifdef __CYGWIN__
+#  undef  _vsnprintf
+#  define _vsnprintf vsnprintf
+#  undef  _vsnwprintf
+#  define _vsnwprintf vswprintf
+# endif
+
+# include <strsafe.h>
+#endif
 
 extern int am_root;
 extern int am_server;
@@ -1688,22 +1703,14 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 			   int flags)
 {
 #ifdef _IS_WINDOWS
-	WIN32_FIND_DATAA ffd;
+	WIN32_FIND_DATAW ffd;
 	DWORD dwExcludeMask = FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_INTEGRITY_STREAM | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_SYSTEM;
 	LARGE_INTEGER filesize;
-	char szDir[MAX_PATH];
-	unsigned szDir_len;
+	wchar_t *szDir = NULL;
+	size_t szDir_len;
 	HANDLE hFind = INVALID_HANDLE_VALUE;
 	DWORD dwError = 0;
-	char *szFname = (char*) fbuf;
-#ifdef __CYGWIN__
-	char *winpath = cygwin_create_path(CCP_POSIX_TO_WIN_A, fbuf);
-	if (!winpath) {
-		errno = ENOMEM;
-		return;
-	}
-	szFname = winpath;
-#endif
+	wchar_t *szFname = win32_utf8_to_wide_path(fbuf, TRUE);
 #else
 	struct dirent *di = NULL;
 	DIR *d = NULL;
@@ -1717,58 +1724,54 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 	assert(flist != NULL);
 
 #ifdef _IS_WINDOWS
-	// subtract an additional two character for the later strlcat!
-	if ((szDir_len = strlcpy(szDir, szFname, MAX_PATH - _WIN_PATH_SIZE_INTERNAL - 2)) >= MAX_PATH - _WIN_PATH_SIZE_INTERNAL - 2) {
-		io_error |= IOERR_GENERAL;
-		rprintf(FERROR_XFER,
-			"filename overflows max-path len by %u: %s\n",
-			szDir_len - MAX_PATH - _WIN_PATH_SIZE_INTERNAL - 2 + 1, szFname);
-		errno = EOVERFLOW;
-#ifdef __CYGWIN__
-		free(winpath);
-#endif
+	if (!szFname) { errno = ENOMEM; return; }
+
+	szDir_len = wcslen(szFname) + 3 + 1;
+	szDir = calloc(szDir_len * sizeof(wchar_t), 1);
+	if (!szDir) {
+		free(szFname);
+		errno = ENOMEM;
 		return;
 	}
 
-	if ((szDir_len = strlcat(szDir, "\\*", MAX_PATH - _WIN_PATH_SIZE_INTERNAL)) >= MAX_PATH - _WIN_PATH_SIZE_INTERNAL) {
+	if (FAILED(StringCchPrintfW(szDir, szDir_len, L"%S\\*", szFname)) == TRUE) {
 		io_error |= IOERR_GENERAL;
 		rprintf(FERROR_XFER,
-			"filename overflows max-path len by %u: %s\n",
-			szDir_len - MAX_PATH - _WIN_PATH_SIZE_INTERNAL + 1, szDir);
+			"filename failed StringCchPrintf: %S\n",
+			szFname);
 		errno = EOVERFLOW;
-#ifdef __CYGWIN__
-		free(winpath);
-#endif
+		free(szFname);
+		free(szDir);
 		return;
 	}
 
 	if (DEBUG_GTE(TIME, 3)) {
 		rprintf(FINFO,
-			"[debug] FindFirstFileA on '%s' from '%s'; current error code %d\n",
+			"[debug] FindFirstFile on '%S' from '%s'; current error code %d\n",
 			szDir,
 			fbuf,
 			GetLastError());
 	}
 
-#ifdef __CYGWIN__
-	free(winpath);
-#endif
+	free(szFname);
 
 	SetLastError(ERROR_SUCCESS);
 
-	if ((hFind = FindFirstFileA(szDir, &ffd)) == INVALID_HANDLE_VALUE) {
+	if ((hFind = FindFirstFileW(szDir, &ffd)) == INVALID_HANDLE_VALUE) {
 		if (GetLastError() == ERROR_FILE_NOT_FOUND) {
 			errno = ENOENT;
 			if (am_sender) /* Can abuse this for vanished error w/ENOENT: */
 				interpret_stat_error(fbuf, True);
+			free(szDir);
 			return;
 		}
 		errno = EINVAL;
 		io_error |= IOERR_GENERAL;
 		rprintf(FERROR_XFER,
-			"unable to open '%s'; FindFirstFileA failed with error code %d\n",
+			"unable to open '%S'; FindFirstFile failed with error code %d\n",
 			szDir,
 			GetLastError());
+		free(szDir);
 		return;
 	}
 #else
@@ -1795,7 +1798,7 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		remainder = 0;
 
 #ifdef _IS_WINDOWS
-	for (errno = 0, dwError = GetLastError(); dwError == ERROR_SUCCESS; dwError = (FindNextFileA(hFind, &ffd) != 0 ? ERROR_SUCCESS : GetLastError())) {
+	for (errno = 0, dwError = GetLastError(); dwError == ERROR_SUCCESS; dwError = (FindNextFileW(hFind, &ffd) != 0 ? ERROR_SUCCESS : GetLastError())) {
 #else
 	for (errno = 0, di = readdir(d); di; errno = 0, di = readdir(d)) {
 #endif
@@ -1815,11 +1818,20 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		sst.st_ino = 0;
 		sst.st_mode = ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) ? S_IFDIR : S_IFREG;
 		sst.st_mode = ((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) ? S_IFLNK : sst.st_mode;
+		// TODO: FILE_ATTRIBUTE_READONLY
 		sst.st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
 		sst.st_atime = win32_filetime_to_epoch(&ffd.ftLastAccessTime);
 		sst.st_ctime = win32_filetime_to_epoch(&ffd.ftCreationTime);
 		sst.st_mtime = win32_filetime_to_epoch(&ffd.ftLastWriteTime);
-		char *dname = ffd.cFileName;
+		char *dname = win32_wide_to_utf8(ffd.cFileName);
+
+		if (!dname) {
+			rprintf(FERROR, "path %S contained %S that could not be converted to UTF-8 (error code: %d)\n",
+			szDir,
+			ffd.cFileName,
+			GetLastError());
+			continue;
+		}
 
 		if ((ffd.dwFileAttributes & dwExcludeMask) != 0) {
 			// Skip system files; cannot handle the remote side either
@@ -1866,14 +1878,14 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 #ifdef _IS_WINDOWS
 	if (DEBUG_GTE(TIME, 3)) {
 		rprintf(FINFO,
-			"[debug] FindFirstFileA loop finished with error code %d inside '%s'\n",
+			"[debug] FindFirstFile loop finished with error code %d inside '%s'\n",
 			GetLastError(),
 			full_fname(fbuf));
 	}
 
 	if (dwError != 0 && dwError != ERROR_NO_MORE_FILES) {
 		io_error |= IOERR_GENERAL;
-		rsyserr(FERROR_XFER, dwError, "FindNextFileA(%s)", full_fname(fbuf));
+		rsyserr(FERROR_XFER, dwError, "FindNextFile(%s)", full_fname(fbuf));
 	}
 #else
 	if (errno) {
@@ -1884,6 +1896,7 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 
 #ifdef _IS_WINDOWS
 	FindClose(hFind);
+	free(szDir);
 #else
 	closedir(d);
 #endif

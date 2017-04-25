@@ -353,6 +353,10 @@ case $host_os in
 			    		[Define to 1 if Win64 API should be used])])
 				dnl Include W32API Headers for Cygwin and Msys
 				CFLAGS="-I${W32API_INCLUDE_PATH} $CFLAGS"
+				AC_DEFINE(UNICODE, CP_UTF8,
+			    		[Define to the multi-byte character code page])
+				AC_DEFINE(_UNICODE, CP_UTF8,
+			    		[Define to the multi-byte character code page])
 		   ;;
 	       * ) AC_MSG_RESULT(no);;
 esac

@@ -1567,7 +1567,16 @@ int main(int argc,char *argv[])
 	umask(orig_umask = umask(0));
 
 #if defined CONFIG_LOCALE && defined HAVE_SETLOCALE
+#ifdef _IS_WINDOWS
+	// Export to environment LC_ALL and LANG
+	setenv("LC_ALL", "en_us.UTF-8", 0);
+	setenv("LANG", getenv("LC_ALL"), 0);
+
+	// Set the internal program's locale
+	setlocale(LC_ALL, "");
+#else
 	setlocale(LC_CTYPE, "");
+#endif
 #endif
 
 	if (!parse_arguments(&argc, (const char ***) &argv)) {
