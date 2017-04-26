@@ -1707,10 +1707,10 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 	DWORD dwExcludeMask = FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_INTEGRITY_STREAM | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_SYSTEM;
 	LARGE_INTEGER filesize;
 	wchar_t *szDir = NULL;
-	size_t szDir_len;
+	size_t szDir_len, szFname_len_want;
 	HANDLE hFind = INVALID_HANDLE_VALUE;
 	DWORD dwError = 0;
-	wchar_t *szFname = win32_utf8_to_wide_path(fbuf, TRUE);
+	wchar_t *szFname = win32_utf8_to_wide_path(fbuf, FALSE);
 #else
 	struct dirent *di = NULL;
 	DIR *d = NULL;
@@ -1734,7 +1734,13 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		return;
 	}
 
-	if (FAILED(StringCchPrintfW(szDir, szDir_len, L"%S\\*", szFname)) == TRUE) {
+	// Back index up on trailing slashes
+	szFname_len_want = wcslen(szFname) - 1;
+	while (szFname[szFname_len_want] == L'\\') {
+		--szFname_len_want;
+	}
+
+	if (FAILED(StringCchPrintfW(szDir, szDir_len, L"%.*S\\*", szFname_len_want + 1, szFname)) == TRUE) {
 		io_error |= IOERR_GENERAL;
 		rprintf(FERROR_XFER,
 			"filename failed StringCchPrintf: %S\n",
@@ -1745,10 +1751,10 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 		return;
 	}
 
-	if (DEBUG_GTE(TIME, 3)) {
+	if (DEBUG_GTE(TIME, 1)) {
 		rprintf(FINFO,
-			"[debug] FindFirstFile on '%S' from '%s'; current error code %d\n",
-			szDir,
+			"[debug] FindFirstFile on '%S' (%S) from '%s'; current error code %d\n",
+			szDir, szFname,
 			fbuf,
 			GetLastError());
 	}
