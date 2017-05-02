@@ -2836,6 +2836,31 @@ static char *parse_hostspec(char *str, char **path_start_ptr, int *port_ptr)
 	int hostlen = 0, userlen = 0;
 	char *ret;
 
+#ifdef _IS_WINDOWS
+	wchar_t *szDir = win32_utf8_to_wide_path(str, FALSE);
+
+	if (!szDir) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	if (!strncmp(str, "//?/", 4) || !strncmp(str, "\\\\?\\", 4)) {
+		// path is an UNC UNICODE path
+		free(szDir);
+		*path_start_ptr = str;
+		return NULL;
+	} else if (PathIsUNCServerShareW(szDir) == FALSE && PathIsUNCW(szDir) == TRUE) {
+		free(szDir);
+		*path_start_ptr = str;
+		return NULL;
+	} else if (PathIsUNCServerShareW(szDir) == TRUE) {
+		rprintf(FINFO, "The UNC path '%S' was detected as a remote network share. Please consider using rsync on all machines and configure a Rsync Daemon service for the destination.\n", szDir);
+	}
+	// TODO: Check for '<drive letter>:' syntax
+	// TODO: Complain about PathIsNetworkPathW then...
+	free(szDir);
+#endif
+
 	for (s = str; ; s++) {
 		if (!*s) {
 			/* It is only OK if we run out of string with rsync:// */
