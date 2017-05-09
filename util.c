@@ -162,7 +162,7 @@ wchar_t* win32_utf8_to_wide(const char *str)
 
 	size_t szWideLength;
 	if ((szWideLength = MultiByteToWideChar(CP_UTF8,
-											MB_ERR_INVALID_CHARS,
+											0,
 											str,
 											-1, // process entire string, including NULL
 											NULL,
@@ -182,7 +182,7 @@ wchar_t* win32_utf8_to_wide(const char *str)
 
 	// perform conversion
 	if (MultiByteToWideChar(CP_UTF8,
-							MB_ERR_INVALID_CHARS,
+							0,
 							str,
 							-1,
 							retval,
@@ -208,7 +208,7 @@ char* win32_wide_to_utf8(const wchar_t *str)
 
 	size_t szWideLength;
 	if ((szWideLength = WideCharToMultiByte(CP_UTF8,
-											WC_ERR_INVALID_CHARS,
+											0,
 											str,
 											-1, // process entire string, including NULL
 											NULL,
@@ -230,7 +230,7 @@ char* win32_wide_to_utf8(const wchar_t *str)
 
 	// perform conversion
 	if (WideCharToMultiByte(CP_UTF8,
-							WC_ERR_INVALID_CHARS,
+							0,
 							str,
 							-1,
 							retval,
