@@ -1710,6 +1710,7 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 	size_t szDir_len, szFname_len_want;
 	HANDLE hFind = INVALID_HANDLE_VALUE;
 	DWORD dwError = 0;
+	fbuf[len] = 0;
 	wchar_t *szFname = win32_utf8_to_wide_path(fbuf, FALSE);
 #else
 	struct dirent *di = NULL;
