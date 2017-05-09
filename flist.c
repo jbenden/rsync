@@ -1736,7 +1736,7 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 
 	// Back index up on trailing slashes
 	szFname_len_want = wcslen(szFname) - 1;
-	while (szFname[szFname_len_want] == L'\\') {
+	while (szFname_len_want > 0 && szFname[szFname_len_want] == L'\\') {
 		--szFname_len_want;
 	}
 
