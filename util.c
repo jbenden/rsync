@@ -172,12 +172,13 @@ wchar_t* win32_utf8_to_wide(const char *str)
 			str,
 			szWideLength,
 			GetLastError());
+		errno = EINVAL;
 		return NULL;
 	}
 
 	// allocate buffer
 	wchar_t *retval = calloc(szWideLength * sizeof(wchar_t), 1);
-	if (!retval) return NULL;
+	if (!retval) { errno = ENOMEM; return NULL; }
 
 	// perform conversion
 	if (MultiByteToWideChar(CP_UTF8,
@@ -192,6 +193,7 @@ wchar_t* win32_utf8_to_wide(const char *str)
 			szWideLength,
 			GetLastError());
 		free(retval);
+		errno = EINVAL;
 		return NULL;
 	}
 
@@ -218,12 +220,13 @@ char* win32_wide_to_utf8(const wchar_t *str)
 			str,
 			szWideLength,
 			GetLastError());
+		errno = EINVAL;
 		return NULL;
 	}
 
 	// allocate buffer
-	char *retval = calloc(szWideLength * sizeof(char), 1);
-	if (!retval) return NULL;
+	char *retval = calloc(szWideLength * sizeof(char) + 1, 1);
+	if (!retval) { errno = ENOMEM; return NULL; }
 
 	// perform conversion
 	if (WideCharToMultiByte(CP_UTF8,
@@ -240,6 +243,7 @@ char* win32_wide_to_utf8(const wchar_t *str)
 			szWideLength,
 			GetLastError());
 		free(retval);
+		errno = EINVAL;
 		return NULL;
 	}
 
