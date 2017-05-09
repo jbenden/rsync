@@ -264,6 +264,11 @@ wchar_t* win32_utf8_to_wide_path(const char *fname, int noUnicodeUNC)
 	wchar_t *szFname = win32_utf8_to_wide(fname);
 #endif
 
+	if (!szFname) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
 	// Prepend the unicode marker.
 	size_t szDir_len = wcslen(szFname) + szFmtExtraLen + 2;
 	wchar_t *szDir = calloc(szDir_len * sizeof(wchar_t), 1);
