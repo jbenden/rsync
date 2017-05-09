@@ -1772,13 +1772,10 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 			free(szDir);
 			return;
 		}
+		free(szDir);
 		errno = EINVAL;
 		io_error |= IOERR_GENERAL;
-		rprintf(FERROR_XFER,
-			"unable to open '%S'; FindFirstFile failed with error code %d\n",
-			szDir,
-			GetLastError());
-		free(szDir);
+		rsyserr(FERROR_XFER, errno, "FindFirstFile %s failed", full_fname(fbuf));
 		return;
 	}
 #else
