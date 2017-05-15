@@ -1525,12 +1525,38 @@ static void rsync_panic_handler(UNUSED(int whatsig))
 }
 #endif
 
+#ifdef _IS_WINDOWS
+int g_argc = 0;
+char **g_argv = NULL;
+#endif
 
-int main(int argc,char *argv[])
+int main(int argc,char *inargv[])
 {
 	int ret;
 	int orig_argc = argc;
-	char **orig_argv = argv;
+
+#ifdef _IS_WINDOWS
+	char **argv = (char**) calloc(1, sizeof(char*) * (argc + 1));
+	if (!argv) { errno = ENOMEM; return 1; }
+
+	g_argc = argc;
+	g_argv = argv;
+
+	for (ssize_t i = 0; i < argc; ++i) {
+		wchar_t *tmp = win32_acp_to_wide(inargv[i]);
+		if (!tmp) { errno = ENOMEM; return 1; }
+
+		argv[i] = win32_wide_to_utf8(tmp);
+		if (!argv[i]) { errno = ENOMEM; return 1; }
+		free(tmp);
+	}
+
+	char **orig_argv = (char**) argv;
+#else
+	char **argv = (char**) inargv;
+	char **orig_argv = (char**) inargv;
+#endif
+
 #ifdef HAVE_SIGACTION
 # ifdef HAVE_SIGPROCMASK
 	sigset_t sigmask;

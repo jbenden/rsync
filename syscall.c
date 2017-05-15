@@ -33,6 +33,24 @@
 #include <sys/syscall.h>
 #endif
 
+#ifdef _IS_WINDOWS
+# include <stdarg.h>
+# include <stdio.h>
+# include <wtypes.h>
+# include <wchar.h>
+
+# ifdef __CYGWIN__
+#  undef  _vsnprintf
+#  define _vsnprintf vsnprintf
+#  undef  _vsnwprintf
+#  define _vsnwprintf vswprintf
+# endif
+
+# define __CRT__NO_INLINE
+# define __CRT_STRSAFE_IMPL
+# include <strsafe.h>
+#endif
+
 extern int dry_run;
 extern int am_root;
 extern int am_sender;
@@ -75,6 +93,39 @@ int do_symlink(const char *lnk, const char *fname)
 {
 	if (dry_run) return 0;
 	RETURN_ERROR_IF_RO_OR_LO;
+
+#if defined _IS_WINDOWS
+	DWORD dwFlags = 0;
+	STRUCT_STAT st;
+
+	if (do_stat(lnk, &st) == 0) {
+		if (S_ISDIR(st.st_mode)) {
+			dwFlags = SYMBOLIC_LINK_FLAG_DIRECTORY;
+		}
+	}
+
+	wchar_t *szSymlink = win32_utf8_to_wide_path_maybe_relative(fname, TRUE);
+	if (!szSymlink) { errno = ENOMEM; return -1; }
+
+	wchar_t *szTarget = win32_utf8_to_wide_path_maybe_relative(lnk, TRUE);
+	if (!szTarget) { free(szSymlink); errno = ENOMEM; return -1; }
+
+	if (CreateSymbolicLinkW(szSymlink, szTarget, dwFlags) == FALSE) {
+		// errored
+		rprintf(FERROR, "failed to create symlink '%S' -> '%S' error code %d\n",
+			szTarget, szSymlink,
+			GetLastError());
+		free(szSymlink);
+		free(szTarget);
+		win32_set_errno();
+		return -1;
+	}
+
+	free(szSymlink);
+	free(szTarget);
+
+	return 0;
+#endif
 
 #if defined NO_SYMLINK_XATTRS || defined NO_SYMLINK_USER_XATTRS
 	/* For --fake-super, we create a normal file with mode 0600
@@ -319,58 +370,52 @@ int do_stat(const char *fname, STRUCT_STAT *st)
 {
 #ifdef _IS_WINDOWS
 	ULARGE_INTEGER filesize;
-	WIN32_FILE_ATTRIBUTE_DATA fad;
-	char *szFname = (char*) fname;
-#ifdef __CYGWIN__
-	char *winpath = cygwin_create_path(CCP_POSIX_TO_WIN_A, fname);
-	if (!winpath) {
-		errno = ENOMEM;
+	BY_HANDLE_FILE_INFORMATION fad;
+	HANDLE hFile;
+	DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL;
+	wchar_t *szFname = win32_utf8_to_wide_path(fname, FALSE);
+	if (!szFname) { errno = ENOMEM; return -1; }
+
+	DWORD dwFileAttributes = GetFileAttributesW(szFname);
+	if (dwFileAttributes == INVALID_FILE_ATTRIBUTES) {
+		// error!
+		free(szFname);
+		win32_set_errno();
 		return -1;
 	}
-	szFname = winpath;
-#endif
 
-	if (DEBUG_GTE(TIME, 1)) {
-		rprintf(FINFO, "do_stat on '%s'\n", fname);
+	if ((dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+		dwFlagsAndAttributes = FILE_FLAG_BACKUP_SEMANTICS;
 	}
 
-	if (GetFileAttributesExA(szFname, GetFileExInfoStandard, &fad) == 0) {
-		if (DEBUG_GTE(TIME, 1)) {
-			rprintf(FINFO, "do_stat on '%s' errored with error code %d\n", fname, GetLastError());
-		}
-		switch (GetLastError()) {
-		case ERROR_FILE_NOT_FOUND:
-		case ERROR_PATH_NOT_FOUND:
-			errno = ENOENT;
-			break;
-		case ERROR_ACCESS_DENIED:
-		case ERROR_NETWORK_ACCESS_DENIED:
-			errno = EACCES;
-			break;
-		case ERROR_INVALID_HANDLE:
-			errno = EBADF;
-			break;
-		case ERROR_TOO_MANY_OPEN_FILES:
-		case ERROR_OUTOFMEMORY:
-			errno = ENOMEM;
-			break;
-		case ERROR_BAD_LENGTH:
-			errno = ENAMETOOLONG;
-			break;
-		case ERROR_INVALID_PARAMETER:
-			errno = EFAULT;
-			break;
-		default:
-			errno = EINVAL;
-		}
-#ifdef __CYGWIN__
-		free(winpath);
-#endif
+	hFile = CreateFileW(szFname, // file to open
+		0, // file opts
+		FILE_SHARE_READ, // share opts
+		NULL, //default security
+		OPEN_EXISTING, // existing file only
+		dwFlagsAndAttributes, // normal file
+		NULL);  // no attr. template
+
+	if (hFile == INVALID_HANDLE_VALUE) {
+		// error opening....
+		/* rprintf(FERROR, "failed to open inside of do_stat of %S: error code %d\n",
+			szFname,
+			GetLastError()); */
+		free(szFname);
+		win32_set_errno();
 		return -1;
 	}
-#ifdef __CYGWIN__
-	free(winpath);
-#endif
+
+	if (GetFileInformationByHandle(hFile, &fad) == FALSE) {
+		// problem!
+		/* rprintf(FINFO, "do_stat on '%s' errored with error code %d\n", fname, GetLastError()); */
+		free(szFname);
+		win32_set_errno();
+		CloseHandle(hFile);
+		return -1;
+	}
+	CloseHandle(hFile);
+	free(szFname);
 
 	st->st_uid = 0;
 	st->st_gid = 0;
@@ -384,7 +429,16 @@ int do_stat(const char *fname, STRUCT_STAT *st)
 	st->st_dev = 0;
 	st->st_ino = 0;
 	st->st_mode = ((fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0) ? S_IFDIR : S_IFREG;
-	st->st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+	st->st_mode = ((fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) ? S_IFLNK : st->st_mode;
+	if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+		if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+			st->st_mode += ((S_IRUSR | S_IXUSR) | (S_IRGRP | S_IXGRP) | (S_IROTH | S_IXOTH));
+		} else {
+			st->st_mode += (S_IRUSR | S_IRGRP | S_IROTH);
+		}
+	} else {
+		st->st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+	}
 	st->st_atime = win32_filetime_to_epoch(&fad.ftLastAccessTime);
 	st->st_ctime = win32_filetime_to_epoch(&fad.ftCreationTime);
 	st->st_mtime = win32_filetime_to_epoch(&fad.ftLastWriteTime);
@@ -401,8 +455,69 @@ int do_stat(const char *fname, STRUCT_STAT *st)
 
 int do_lstat(const char *fname, STRUCT_STAT *st)
 {
-#ifdef _IS_WINDOWS1
-return do_stat(fname, st);
+#ifdef _IS_WINDOWS
+	int isSymlink = 0;
+	ULARGE_INTEGER filesize;
+	WIN32_FILE_ATTRIBUTE_DATA fad;
+	wchar_t *szFname = win32_utf8_to_wide_path(fname, FALSE);
+	if (!szFname) { errno = ENOMEM; return -1; }
+
+	// Read stat information about the SYMLINK itself, not the file symlink refers to...
+	if (GetFileAttributesExW(szFname, GetFileExInfoStandard, &fad) == 0) {
+		/* rprintf(FINFO, "do_lstat on '%s' errored with error code %d\n", fname, GetLastError()); */
+		free(szFname);
+		win32_set_errno();
+		return -1;
+	}
+
+	if (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+		// Need to find out if the reparse point is an actual symlink...
+		WIN32_FIND_DATAW ffd;
+		HANDLE hFind = INVALID_HANDLE_VALUE;
+
+		if ((hFind = FindFirstFileW(szFname, &ffd)) == INVALID_HANDLE_VALUE) {
+			free(szFname);
+			win32_set_errno();
+			return -1;
+		}
+
+		if (((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) &&
+			(ffd.dwReserved0 == IO_REPARSE_TAG_SYMLINK)) {
+			// is symlink!
+			isSymlink = 1;
+		}
+		CloseHandle(hFind);
+	}
+	free(szFname);
+
+	st->st_uid = 0;
+	st->st_gid = 0;
+	filesize.LowPart = fad.nFileSizeLow;
+	filesize.HighPart = fad.nFileSizeHigh;
+	st->st_size = filesize.QuadPart;
+	st->st_blocks = (st->st_size / 512ULL) + 1ULL;
+	st->st_blksize = 4096;
+	st->st_rdev = 0;
+	st->st_nlink = 0;
+	st->st_dev = 0;
+	st->st_ino = 0;
+	st->st_mode = ((fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0) ? S_IFDIR : S_IFREG;
+	st->st_mode = (isSymlink == 1) ? S_IFLNK : st->st_mode;
+	if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+		if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+			st->st_mode += ((S_IRUSR | S_IXUSR) | (S_IRGRP | S_IXGRP) | (S_IROTH | S_IXOTH));
+		} else {
+			st->st_mode += (S_IRUSR | S_IRGRP | S_IROTH);
+		}
+	} else {
+		st->st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+	}
+	st->st_atime = win32_filetime_to_epoch(&fad.ftLastAccessTime);
+	st->st_ctime = win32_filetime_to_epoch(&fad.ftCreationTime);
+	st->st_mtime = win32_filetime_to_epoch(&fad.ftLastWriteTime);
+
+	return 0;
+
 #else
 #ifdef SUPPORT_LINKS
 # ifdef USE_STAT64_FUNCS
@@ -633,3 +748,260 @@ int do_open_nofollow(const char *pathname, int flags)
 
 	return fd;
 }
+
+#ifdef _IS_WINDOWS
+time_t win32_filetime_to_epoch(const FILETIME *ft)
+{
+	ULARGE_INTEGER liFileTime;
+	ULONGLONG llSeconds;
+	time_t retval;
+
+	if (!ft) return (time_t) -1;
+
+	liFileTime.LowPart = ft->dwLowDateTime;
+	liFileTime.HighPart = ft->dwHighDateTime;
+	llSeconds = ((ULONGLONG) liFileTime.QuadPart / (ULONGLONG) _WIN_FILETIME_TO_UTC_EPOCH_DIVISOR - _WIN_SECONDS_TO_UNIX_EPOCH);
+	retval = (time_t) llSeconds;
+
+	if (llSeconds != (ULONGLONG) retval) {
+		// value exceed POSIX epoch time, fail
+		return (time_t) -1;
+	}
+
+	return retval;
+}
+
+wchar_t* win32_acp_to_wide(const char *str)
+{
+	// sanity check
+	if (!str) return NULL;
+
+	size_t szWideLength;
+	if ((szWideLength = MultiByteToWideChar(CP_ACP,
+											0,
+											str,
+											-1, // process entire string, including NULL
+											NULL,
+											0)) == 0) {
+		// error, could not calculate length in bytes
+		rprintf(FINFO, "invalid conversion to wide character; could not determine length of '%s' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		errno = EINVAL;
+		return NULL;
+	}
+
+	// allocate buffer
+	wchar_t *retval = calloc(szWideLength * sizeof(wchar_t), 1);
+	if (!retval) { errno = ENOMEM; return NULL; }
+
+	// perform conversion
+	if (MultiByteToWideChar(CP_ACP,
+							0,
+							str,
+							-1,
+							retval,
+							szWideLength) == 0) {
+		// error performing actual conversion.
+		rprintf(FINFO, "invalid conversion to wide character; could not convert '%s' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		free(retval);
+		errno = EINVAL;
+		return NULL;
+	}
+
+	// return
+	return retval;
+}
+
+wchar_t* win32_utf8_to_wide(const char *str)
+{
+	// sanity check
+	if (!str) return NULL;
+
+	size_t szWideLength;
+	if ((szWideLength = MultiByteToWideChar(CP_UTF8,
+											0,
+											str,
+											-1, // process entire string, including NULL
+											NULL,
+											0)) == 0) {
+		// error, could not calculate length in bytes
+		rprintf(FINFO, "invalid conversion to wide character; could not determine length of '%s' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		errno = EINVAL;
+		return NULL;
+	}
+
+	// allocate buffer
+	wchar_t *retval = calloc(szWideLength * sizeof(wchar_t), 1);
+	if (!retval) { errno = ENOMEM; return NULL; }
+
+	// perform conversion
+	if (MultiByteToWideChar(CP_UTF8,
+							0,
+							str,
+							-1,
+							retval,
+							szWideLength) == 0) {
+		// error performing actual conversion.
+		rprintf(FINFO, "invalid conversion to wide character; could not convert '%s' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		free(retval);
+		errno = EINVAL;
+		return NULL;
+	}
+
+	// return
+	return retval;
+}
+
+char* win32_wide_to_utf8(const wchar_t *str)
+{
+	// sanity check
+	if (!str) return NULL;
+
+	size_t szWideLength;
+	if ((szWideLength = WideCharToMultiByte(CP_UTF8,
+											0,
+											str,
+											-1, // process entire string, including NULL
+											NULL,
+											0,
+											NULL,
+											NULL)) == 0) {
+		// error, could not calculate length in bytes
+		rprintf(FINFO, "invalid conversion from wide character; could not determine length of '%S' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		errno = EINVAL;
+		return NULL;
+	}
+
+	// allocate buffer
+	char *retval = calloc(szWideLength * sizeof(char) + 1, 1);
+	if (!retval) { errno = ENOMEM; return NULL; }
+
+	// perform conversion
+	if (WideCharToMultiByte(CP_UTF8,
+							0,
+							str,
+							-1,
+							retval,
+							szWideLength,
+							NULL,
+							NULL) == 0) {
+		// error performing actual conversion.
+		rprintf(FINFO, "invalid conversion from wide character; could not convert '%S' (length: %ld, error code: %d)",
+			str,
+			szWideLength,
+			GetLastError());
+		free(retval);
+		errno = EINVAL;
+		return NULL;
+	}
+
+	// return
+	return retval;
+}
+
+static wchar_t* win32_utf8_to_wide_path_internal(const char *fname, int noUnicodeUNC, WINBOOL absolute)
+{
+	const wchar_t *szFmt = noUnicodeUNC == TRUE ? L"%S" : L"\\\\?\\%S";
+	const size_t szFmtExtraLen = noUnicodeUNC == TRUE ? 0 : 4;
+
+#ifdef __CYGWIN__
+    cygwin_conv_path_t flags = CCP_POSIX_TO_WIN_A;
+	if (!absolute) flags |= CCP_RELATIVE;
+	char *winpath = (char*) cygwin_create_path(flags, fname);
+	if (!winpath) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	wchar_t *szFname = win32_utf8_to_wide(winpath);
+	free(winpath);
+#else
+	wchar_t *szFname = win32_utf8_to_wide(fname);
+#endif
+
+	if (!szFname) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	// Prepend the unicode marker.
+	size_t szDir_len = wcslen(szFname) + szFmtExtraLen + 2;
+	wchar_t *szDir = calloc(szDir_len * sizeof(wchar_t), 1);
+	if (!szDir) {
+		free(szFname);
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	if (FAILED(StringCchPrintfW(szDir, szDir_len, szFmt, szFname)) == TRUE) {
+		rprintf(FERROR_XFER,
+			"filename failed StringCchPrintf prefixing: %S\n",
+			szFname);
+		errno = EOVERFLOW;
+		free(szFname);
+		free(szDir);
+		return NULL;
+	}
+
+	return szDir;
+}
+
+wchar_t* win32_utf8_to_wide_path_maybe_relative(const char *fname, int noUnicodeUNC)
+{
+	if (!fname) return NULL;
+	if (fname[0] == '/' || fname[0] == '\\') {
+	    return win32_utf8_to_wide_path_internal(fname, noUnicodeUNC, TRUE);
+	} else {
+	    return win32_utf8_to_wide_path_internal(fname, noUnicodeUNC, FALSE);
+	}
+}
+
+wchar_t* win32_utf8_to_wide_path(const char *fname, int noUnicodeUNC)
+{
+	return win32_utf8_to_wide_path_internal(fname, noUnicodeUNC, TRUE);
+}
+
+void win32_set_errno(void)
+{
+	switch (GetLastError()) {
+	case ERROR_FILE_NOT_FOUND:
+	case ERROR_PATH_NOT_FOUND:
+		errno = ENOENT;
+		break;
+	case ERROR_ACCESS_DENIED:
+	case ERROR_NETWORK_ACCESS_DENIED:
+		errno = EACCES;
+		break;
+	case ERROR_INVALID_HANDLE:
+		errno = EBADF;
+		break;
+	case ERROR_TOO_MANY_OPEN_FILES:
+	case ERROR_OUTOFMEMORY:
+		errno = ENOMEM;
+		break;
+	case ERROR_BAD_LENGTH:
+		errno = ENAMETOOLONG;
+		break;
+	case ERROR_INVALID_PARAMETER:
+		errno = EFAULT;
+		break;
+	default:
+		rprintf(FERROR, "win32_set_errno: failed to translate %d to an errno value.\n",
+			GetLastError());
+		errno = EINVAL;
+	}
+}
+#endif

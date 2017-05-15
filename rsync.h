@@ -1040,9 +1040,12 @@ typedef struct {
 
 /* Forward Declarations */
 extern time_t win32_filetime_to_epoch(const FILETIME *ft);
+extern wchar_t* win32_acp_to_wide(const char *str);
 extern wchar_t* win32_utf8_to_wide(const char *str);
 extern char* win32_wide_to_utf8(const wchar_t *str);
 extern wchar_t* win32_utf8_to_wide_path(const char *fname, int noUnicodeUNC);
+extern wchar_t* win32_utf8_to_wide_path_maybe_relative(const char *fname, int noUnicodeUNC);
+extern void win32_set_errno(void);
 #endif
 
 #include "proto.h"

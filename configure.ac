@@ -352,7 +352,7 @@ case $host_os in
 					[AC_DEFINE(_WIN64, 1,
 			    		[Define to 1 if Win64 API should be used])])
 				dnl Include W32API Headers for Cygwin and Msys
-				CFLAGS="-I${W32API_INCLUDE_PATH} $CFLAGS"
+				CFLAGS="-I${W32API_INCLUDE_PATH} -DWINVER=0x0600 -D_WIN32 -D_WIN32_WINNT=0x0600 -D__MSVCRT_VERSION__=0x0800 $CFLAGS"
 				LIBS="$LIBS -lshlwapi"
 				AC_DEFINE(UNICODE, CP_UTF8,
 			    		[Define to the multi-byte character code page])

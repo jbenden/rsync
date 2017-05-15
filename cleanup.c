@@ -34,6 +34,10 @@ extern int output_needs_newline;
 extern char *partial_dir;
 extern char *logfile_name;
 extern BOOL prio_was_enabled;
+#ifdef _IS_WINDOWS
+extern int g_argc;
+extern char **g_argv;
+#endif
 
 BOOL shutting_down = False;
 BOOL flush_ok_after_signal = False;
@@ -278,6 +282,15 @@ NORETURN void _exit_cleanup(int code, const char *file, int line)
 	default:
 		break;
 	}
+
+#ifdef _IS_WINDOWS
+	for (ssize_t i = 0; i < g_argc; ++i) {
+		free(g_argv[i]);
+		g_argv[i] = NULL;
+	}
+	free(g_argv);
+	g_argv = NULL;
+#endif
 
 	exit(exit_code);
 }

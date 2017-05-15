@@ -1754,10 +1754,9 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 
 	if (DEBUG_GTE(TIME, 1)) {
 		rprintf(FINFO,
-			"[debug] FindFirstFile on '%S' (%S) from '%s'; current error code %d\n",
+			"[debug] FindFirstFile on '%S' (%S) from '%s'\n",
 			szDir, szFname,
-			fbuf,
-			GetLastError());
+			fbuf);
 	}
 
 	free(szFname);
@@ -1896,7 +1895,8 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 
 	if (dwError != 0 && dwError != ERROR_NO_MORE_FILES) {
 		io_error |= IOERR_GENERAL;
-		rsyserr(FERROR_XFER, dwError, "FindNextFile(%s)", full_fname(fbuf));
+		win32_set_errno();
+		rsyserr(FERROR_XFER, errno, "FindNextFile(%s)", full_fname(fbuf));
 	}
 #else
 	if (errno) {
