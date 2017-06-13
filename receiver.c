@@ -811,10 +811,53 @@ int recv_files(int f_in, int f_out, char *local_name)
 		}
 
 		/* We now check to see if we are writing the file "inplace" */
+#ifndef _IS_WINDOWS
+#define _RS_RESTORE_ATTRS_WITH_CLEANUP do { ; } while (0)
+#else
+#define _RS_RESTORE_ATTRS_WITH_CLEANUP do { \
+		int saved_errno = errno; \
+		if (restore_readonly == 1 && dwAttrs != INVALID_FILE_ATTRIBUTES) { \
+			SetFileAttributesW(szFname, dwAttrs); \
+			restore_readonly = 0; \
+		} \
+		if (szFname) { \
+			free(szFname); \
+			szFname = NULL; \
+		} \
+		errno = saved_errno; \
+	} while (0)
+
+		int restore_readonly;
+		DWORD dwAttrs;
+
+		restore_readonly = 0;
+		dwAttrs = INVALID_FILE_ATTRIBUTES;
+
+		wchar_t *szFname = win32_utf8_to_wide_path(fname, FALSE);
+		if (!szFname) {
+			errno = ENOMEM;
+			rsyserr(FERROR_XFER, errno, "utf8_to_wide_path %s failed",
+				full_fname(fname));
+		}
+#endif
+
 		if (inplace)  {
+#ifdef _IS_WINDOWS
+			dwAttrs = GetFileAttributesW(szFname);
+			if (dwAttrs != INVALID_FILE_ATTRIBUTES) {
+				if ((dwAttrs & FILE_ATTRIBUTE_READONLY) != 0) {
+					restore_readonly = 1;
+					if (SetFileAttributesW(szFname, dwAttrs & ~(FILE_ATTRIBUTE_READONLY)) == FALSE) {
+						rprintf(FINFO, "SetFileAttributes %S failed with code %u\n",
+								szFname, GetLastError());
+					}
+				}
+			}
+#endif
 			fd2 = do_open(fname, O_WRONLY|O_CREAT, 0600);
 			if (fd2 == -1) {
-				rsyserr(FERROR_XFER, errno, "open %s failed",
+				_RS_RESTORE_ATTRS_WITH_CLEANUP;
+				rsyserr(FERROR_XFER, errno, "fd2 open %s failed",
 					full_fname(fname));
 			} else if (updating_basis_or_equiv)
 				cleanup_set(NULL, NULL, file, fd1, fd2);
@@ -830,6 +873,7 @@ int recv_files(int f_in, int f_out, char *local_name)
 				close(fd1);
 			if (inc_recurse)
 				send_msg_int(MSG_NO_SEND, ndx);
+			_RS_RESTORE_ATTRS_WITH_CLEANUP;
 			continue;
 		}
 
@@ -844,6 +888,8 @@ int recv_files(int f_in, int f_out, char *local_name)
 				       fname, fd2, F_LENGTH(file));
 
 		log_item(log_code, file, iflags, NULL);
+
+		_RS_RESTORE_ATTRS_WITH_CLEANUP;
 
 		if (fd1 != -1)
 			close(fd1);
