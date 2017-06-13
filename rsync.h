@@ -1248,11 +1248,25 @@ size_t strlcpy(char *d, const char *s, size_t bufsize);
 size_t strlcat(char *d, const char *s, size_t bufsize);
 #endif
 
-#ifndef WEXITSTATUS
+#if !defined(WEXITSTATUS) || defined(__CYGWIN__)
+#undef WEXITSTATUS
 #define	WEXITSTATUS(stat)	((int)(((stat)>>8)&0xFF))
 #endif
-#ifndef WIFEXITED
+
+#if !defined(WIFEXITED) || defined(__CYGWIN__)
+#undef WIFEXITED
 #define	WIFEXITED(stat)		((int)((stat)&0xFF) == 0)
+#endif
+
+#if !defined(WCOREDUMP) || defined(__CYGWIN__)
+#undef WCOREDUMP
+#define WCOREDUMP(w)			(WIFSIGNALED(w) && ((int)(w) & 0x80))
+#endif
+
+#if !defined(WIFSIGNALED) || defined(__CYGWIN__)
+#undef WIFSIGNALED
+#define WIFSIGNALED(w)			(((int)(w) & 0x7f) > 0  \
+	                         && (((int)(w) & 0x7f) < 0x7f))
 #endif
 
 #define exit_cleanup(code) _exit_cleanup(code, __FILE__, __LINE__)
