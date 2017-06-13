@@ -314,3 +314,5 @@ doxygen:
 doxygen-upload:
 	rsync -avzv $(srcdir)/dox/html/ --delete \
 	$${SAMBA_HOST-samba.org}:/home/httpd/html/rsync/doxygen/head/
+
+print-%  : ; @echo $*=$($*)
