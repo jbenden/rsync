@@ -1,7 +1,13 @@
 *.[oa]
 *~
+*.orig
+*.log
+*.patch
 dummy
 ID
+GPATH
+GRTAGS
+GTAGS
 Makefile
 Makefile.old
 configure.sh
