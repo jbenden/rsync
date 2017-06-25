@@ -1013,6 +1013,13 @@ typedef struct {
 #define _WIN_SECONDS_TO_UNIX_EPOCH 11644473600ULL
 #define _WIN_PATH_SIZE_INTERNAL 12
 
+/*
+ * Windows is currently unable to accomodate NSEC resolution under MSYS/Cygwin.
+ */
+#ifdef ST_MTIME_NSEC
+#undef ST_MTIME_NSEC
+#endif
+
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <windows.h>
