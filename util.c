@@ -179,7 +179,10 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 		return -1;
 	}
 
-	CloseHandle(hFile);
+	if (CloseHandle(hFile) == FALSE) {
+		rprintf(FERROR, "failed to close handle in modtime of %S: error code %d\n",
+			szFname, GetLastError());
+	}
 	free(szFname);
 #else
 	switch (switch_step) {
