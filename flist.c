@@ -1848,6 +1848,15 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 			continue;
 		}
 
+		if ((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+			(ffd.dwReserved0 == IO_REPARSE_TAG_SYMLINK_WSL)) {
+			// Skip Windows Sub-system for Linux symbolic links
+			if (DEBUG_GTE(TIME, 2)) {
+				rprintf(FINFO, "skipping path %S WSL symlink\n", ffd.cFileName);
+			}
+			continue;
+		}
+
 		if (DEBUG_GTE(TIME, 1)) {
 			rprintf(FINFO, "path %s with mode 0x%x and mtime %ld (dir: %d)\n", dname, sst.st_mode, sst.st_mtime, ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0) ? 1 : 0);
 		}

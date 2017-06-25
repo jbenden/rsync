@@ -1045,6 +1045,13 @@ typedef struct {
 #define FILE_ATTRIBUTE_RECALL_ON_OPEN 0x40000
 #endif
 
+/*
+ * Windows 10 introduced the Windows Sub-system for Linux. As part of their implementation,
+ * symlinks are now mapped to this dwReserved0 code when FILE_ATTRIBUTE_REPARSE_POINT
+ * holds.
+ */
+#define IO_REPARSE_TAG_SYMLINK_WSL (__MSABI_LONG(0xA000001d))
+
 /* Forward Declarations */
 extern time_t win32_filetime_to_epoch(const FILETIME *ft);
 extern wchar_t* win32_acp_to_wide(const char *str);
