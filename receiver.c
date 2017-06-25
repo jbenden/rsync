@@ -812,49 +812,59 @@ int recv_files(int f_in, int f_out, char *local_name)
 
 		/* We now check to see if we are writing the file "inplace" */
 #ifndef _IS_WINDOWS
-#define _RS_RESTORE_ATTRS_WITH_CLEANUP do { ; } while (0)
+#define _RS_RESTORE_ATTRS_WITH_CLEANUP /*lint -save -e717 */do { ; } while (0)/*lint -restore */
 #else
-#define _RS_RESTORE_ATTRS_WITH_CLEANUP do { \
+#define _RS_RESTORE_ATTRS_WITH_CLEANUP  /*lint -save -e717 */do { \
 		int saved_errno = errno; \
 		if (restore_readonly == 1 && dwAttrs != INVALID_FILE_ATTRIBUTES) { \
-			SetFileAttributesW(szFname, dwAttrs); \
+			(void) SetFileAttributesW(szFname, dwAttrs); \
 			restore_readonly = 0; \
+			dwAttrs = INVALID_FILE_ATTRIBUTES; \
 		} \
 		if (szFname) { \
 			free(szFname); \
 			szFname = NULL; \
 		} \
 		errno = saved_errno; \
-	} while (0)
+	}  while (0) /*lint -restore */
 
-		int restore_readonly;
-		DWORD dwAttrs;
+#define g_check_malloc(addr) \
+	if (! (addr)) { \
+		errno = ENOMEM; \
+		rsyserr(FERROR_XFER, errno, "memory allocation failed, out of memory!"); \
+		abort(); \
+	}
 
-		restore_readonly = 0;
-		dwAttrs = INVALID_FILE_ATTRIBUTES;
-
-		wchar_t *szFname = win32_utf8_to_wide_path(fname, FALSE);
-		if (!szFname) {
-			errno = ENOMEM;
-			rsyserr(FERROR_XFER, errno, "utf8_to_wide_path %s failed",
-				full_fname(fname));
-		}
+		wchar_t *szFname = NULL;
+		int restore_readonly = 0;
+		DWORD dwAttrs = INVALID_FILE_ATTRIBUTES;
 #endif
 
 		if (inplace)  {
 #ifdef _IS_WINDOWS
-			dwAttrs = GetFileAttributesW(szFname);
-			if (dwAttrs != INVALID_FILE_ATTRIBUTES) {
-				if ((dwAttrs & FILE_ATTRIBUTE_READONLY) != 0) {
-					restore_readonly = 1;
-					if (SetFileAttributesW(szFname, dwAttrs & ~(FILE_ATTRIBUTE_READONLY)) == FALSE) {
-						rprintf(FINFO, "SetFileAttributes %S failed with code %u\n",
-								szFname, GetLastError());
+			fd2 = do_open(fname, O_WRONLY|O_CREAT, 0600);
+			if (fd2 == -1 && errno == EACCES) {
+				g_check_malloc(szFname = win32_utf8_to_wide_path(fname, FALSE));
+
+				dwAttrs = GetFileAttributesW(szFname);
+				if (dwAttrs != INVALID_FILE_ATTRIBUTES) {
+					if ((dwAttrs & FILE_ATTRIBUTE_READONLY) != 0) {
+						restore_readonly = 1;
+						if (DEBUG_GTE(TIME, 2)) {
+							rprintf(FINFO, "File is read-only, removing attribute for recv on %S (attrs: %u)\n", szFname, dwAttrs);
+						}
+						if (SetFileAttributesW(szFname, dwAttrs & ~(FILE_ATTRIBUTE_READONLY)) == FALSE) {
+							rprintf(FINFO, "SetFileAttributes %S failed with code %u\n",
+									szFname, GetLastError());
+						}
 					}
 				}
+
+				fd2 = do_open(fname, O_WRONLY|O_CREAT, 0600);
 			}
-#endif
+#else
 			fd2 = do_open(fname, O_WRONLY|O_CREAT, 0600);
+#endif
 			if (fd2 == -1) {
 				_RS_RESTORE_ATTRS_WITH_CLEANUP;
 				rsyserr(FERROR_XFER, errno, "fd2 open %s failed",
