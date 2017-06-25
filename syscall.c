@@ -505,12 +505,12 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 	st->st_mode = (isSymlink == 1) ? S_IFLNK : st->st_mode;
 	if (fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
 		if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-			st->st_mode += ((S_IRUSR | S_IXUSR) | (S_IRGRP | S_IXGRP) | (S_IROTH | S_IXOTH));
+			st->st_mode |= ((S_IRUSR | S_IXUSR) | (S_IRGRP | S_IXGRP) | (S_IROTH | S_IXOTH));
 		} else {
-			st->st_mode += (S_IRUSR | S_IRGRP | S_IROTH);
+			st->st_mode |= (S_IRUSR | S_IRGRP | S_IROTH);
 		}
 	} else {
-		st->st_mode += (S_IRWXU | S_IRWXG | S_IRWXO);
+		st->st_mode |= (S_IRWXU | S_IRWXG | S_IRWXO);
 	}
 	st->st_atime = win32_filetime_to_epoch(&fad.ftLastAccessTime);
 	st->st_ctime = win32_filetime_to_epoch(&fad.ftCreationTime);
