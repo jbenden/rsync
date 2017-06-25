@@ -481,10 +481,17 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 			return -1;
 		}
 
-		if (((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) &&
+		if ((ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
 			(ffd.dwReserved0 == IO_REPARSE_TAG_SYMLINK)) {
 			// is symlink!
 			isSymlink = 1;
+		} else {
+			if (DEBUG_GTE(TIME, 3)) {
+				rprintf(FINFO, "do_lstat %S dwFileAttributes of 0x%x res0 0x%x\n",
+					szFname,
+					ffd.dwFileAttributes,
+					ffd.dwReserved0);
+			}
 		}
 		CloseHandle(hFind);
 	}
