@@ -485,6 +485,7 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 			(ffd.dwReserved0 == IO_REPARSE_TAG_SYMLINK)) {
 			// is symlink!
 			isSymlink = 1;
+#ifdef DEBUG
 		} else {
 			if (DEBUG_GTE(TIME, 3)) {
 				rprintf(FINFO, "do_lstat %S dwFileAttributes of 0x%x res0 0x%x\n",
@@ -493,6 +494,7 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 					ffd.dwReserved0);
 			}
 		}
+#endif
 		CloseHandle(hFind);
 	}
 	free(szFname);
