@@ -357,7 +357,8 @@ test_xfail() {
 }
 
 # Determine what shell command will appropriately test for links.
-ln -s foo "$scratchdir/testlink"
+touch "$scratchdir/foo"
+ln -s "$scratchdir/foo" "$scratchdir/testlink"
 for cmd in test /bin/test /usr/bin/test /usr/ucb/bin/test /usr/ucb/test
 do
     for switch in -h -L
@@ -373,7 +374,7 @@ do
 done
 # ok, now get rid of it
 rm "$scratchdir/testlink"
-
+rm "$scratchdir/foo"
 
 if [ "x$TEST_SYMLINK_CMD" = 'x' ]
 then

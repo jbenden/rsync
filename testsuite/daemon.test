@@ -21,6 +21,10 @@
 
 . "$suitedir/rsync.fns"
 
+case "`uname -s`" in
+	MSYS_NT*) test_skipped "Can't test on MSYS2";;
+esac
+
 chkfile="$scratchdir/rsync.chk"
 outfile="$scratchdir/rsync.out"
 
