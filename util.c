@@ -131,23 +131,51 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 	}
 
 #ifdef _IS_WINDOWS
+#define _RS_RESTORE_ATTRS_WITH_CLEANUP  /*lint -save -e717 */do { \
+		int saved_errno = errno; \
+		if (restore_readonly == 1 && dwAttrs != INVALID_FILE_ATTRIBUTES) { \
+			(void) SetFileAttributesW(szFname, dwAttrs); \
+			restore_readonly = 0; \
+			dwAttrs = INVALID_FILE_ATTRIBUTES; \
+		} \
+		if (szFname) { \
+			free(szFname); \
+			szFname = NULL; \
+		} \
+		errno = saved_errno; \
+	}  while (0) /*lint -restore */
+
+#define g_check_malloc(addr) \
+	if (! (addr)) { \
+		errno = ENOMEM; \
+		rsyserr(FERROR_XFER, errno, "memory allocation failed, out of memory!"); \
+		abort(); \
+	}
+
 	HANDLE hFile;
 	ULARGE_INTEGER uliModtime;
 	FILETIME ftModtime;
 	DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT;
-	wchar_t *szFname = win32_utf8_to_wide_path(fname, FALSE);
+	DWORD dwAttrs = INVALID_FILE_ATTRIBUTES;
+	wchar_t *szFname = NULL;
+	int restore_readonly = 0, restore_readonly_counter = 0;
 
-	if (!szFname) { errno = ENOMEM; return -1; }
+	g_check_malloc(szFname = win32_utf8_to_wide_path(fname, FALSE));
 
 	if (S_ISDIR(mode)) {
 		dwFlagsAndAttributes = FILE_FLAG_BACKUP_SEMANTICS;
 	}
 
-	// convert POSIX epoch time to win32 FILETIME
+	// convert POSIX epoch time to win32 FILETIME  .000 000 100
+	//ULONGLONG hundredNanoSeconds = ((ULONGLONG) mod_nsec) / 100ULL;
+	//uliModtime.QuadPart = (((ULONGLONG) modtime  + (ULONGLONG) _WIN_SECONDS_TO_UNIX_EPOCH) * (ULONGLONG) _WIN_FILETIME_TO_UTC_EPOCH_DIVISOR) + hundredNanoSeconds;
+
 	uliModtime.QuadPart = (((ULONGLONG) modtime  + (ULONGLONG) _WIN_SECONDS_TO_UNIX_EPOCH) * (ULONGLONG) _WIN_FILETIME_TO_UTC_EPOCH_DIVISOR);
 	ftModtime.dwLowDateTime = uliModtime.LowPart;
 	ftModtime.dwHighDateTime = uliModtime.HighPart;
+	// int posix_to_win32_filetime(time_t epoch, uint32 nsec, FILETIME*);
 
+retry:
 	hFile = CreateFileW(szFname, // file to open
 		FILE_WRITE_ATTRIBUTES, // file opts
 		FILE_SHARE_WRITE, // share opts
@@ -157,12 +185,31 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 		NULL);  // no attr. template
 
 	if (hFile == INVALID_HANDLE_VALUE) {
+		if (restore_readonly_counter < 1) {
+			/* Determine if file is read-only */
+			dwAttrs = GetFileAttributesW(szFname);
+			if (dwAttrs != INVALID_FILE_ATTRIBUTES) {
+				if ((dwAttrs & FILE_ATTRIBUTE_READONLY) != 0) {
+					restore_readonly = 1;
+					if (DEBUG_GTE(TIME, 2)) {
+						rprintf(FINFO, "File is read-only, removing attribute for set_modtime on %S (attrs: %u)\n", szFname, dwAttrs);
+					}
+					if (SetFileAttributesW(szFname, dwAttrs & ~(FILE_ATTRIBUTE_READONLY)) == FALSE) {
+						rprintf(FINFO, "SetFileAttributes %S failed with code %u\n",
+								szFname, GetLastError());
+					}
+					++restore_readonly_counter;
+					goto retry;
+				}
+			}
+		}
+
 		// error opening....
 		rprintf(FERROR, "failed to open inside of set modtime of %S to (%ld) %s: error code %d\n",
 			szFname, (long)modtime,
 			asctime(localtime(&modtime)),
 			GetLastError());
-			free(szFname);
+		_RS_RESTORE_ATTRS_WITH_CLEANUP;
 		win32_set_errno();
 		return -1;
 	}
@@ -174,7 +221,7 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 			asctime(localtime(&modtime)),
 			GetLastError());
 		CloseHandle(hFile);
-		free(szFname);
+		_RS_RESTORE_ATTRS_WITH_CLEANUP;
 		win32_set_errno();
 		return -1;
 	}
@@ -182,8 +229,26 @@ int set_modtime(const char *fname, time_t modtime, uint32 mod_nsec, mode_t mode)
 	if (CloseHandle(hFile) == FALSE) {
 		rprintf(FERROR, "failed to close handle in modtime of %S: error code %d\n",
 			szFname, GetLastError());
+		_RS_RESTORE_ATTRS_WITH_CLEANUP;
 	}
-	free(szFname);
+
+	_RS_RESTORE_ATTRS_WITH_CLEANUP;
+
+#undef _RS_RESTORE_ATTRS_WITH_CLEANUP
+#undef g_check_malloc
+
+	/*
+	STRUCT_STAT mstat;
+	if (do_stat(fname, &mstat) != -1) {
+		rprintf(FINFO, "set modtime on %s (wants %ld put %llu got %ld)\n",
+			fname,
+			modtime,
+			uliModtime.QuadPart,
+			mstat.st_mtime);
+	}
+	*/
+
+	return 0;
 #else
 	switch (switch_step) {
 #ifdef HAVE_UTIMENSAT
