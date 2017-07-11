@@ -189,6 +189,9 @@ retry:
 			/* Determine if file is read-only */
 			dwAttrs = GetFileAttributesW(szFname);
 			if (dwAttrs != INVALID_FILE_ATTRIBUTES) {
+				if (((dwAttrs & FILE_ATTRIBUTE_DIRECTORY) != 0) && S_ISLNK(mode)) {
+					dwFlagsAndAttributes = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+				}
 				if ((dwAttrs & FILE_ATTRIBUTE_READONLY) != 0) {
 					restore_readonly = 1;
 					if (DEBUG_GTE(TIME, 2)) {
@@ -198,9 +201,9 @@ retry:
 						rprintf(FINFO, "SetFileAttributes %S failed with code %u\n",
 								szFname, GetLastError());
 					}
-					++restore_readonly_counter;
-					goto retry;
 				}
+				++restore_readonly_counter;
+				goto retry;
 			}
 		}
 
