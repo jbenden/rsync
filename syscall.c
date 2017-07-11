@@ -94,7 +94,7 @@ int do_symlink(const char *lnk, const char *fname)
 	if (dry_run) return 0;
 	RETURN_ERROR_IF_RO_OR_LO;
 
-#if defined _IS_WINDOWS
+#ifdef _IS_WINDOWS
 	DWORD dwFlags = 0;
 	STRUCT_STAT st;
 
@@ -142,7 +142,9 @@ int do_symlink(const char *lnk, const char *fname)
 	}
 #endif
 
+#ifndef _IS_WINDOWS
 	return symlink(lnk, fname);
+#endif
 }
 
 #if defined NO_SYMLINK_XATTRS || defined NO_SYMLINK_USER_XATTRS
@@ -411,10 +413,10 @@ int do_stat(const char *fname, STRUCT_STAT *st)
 		/* rprintf(FINFO, "do_stat on '%s' errored with error code %d\n", fname, GetLastError()); */
 		free(szFname);
 		win32_set_errno();
-		CloseHandle(hFile);
+		(void) CloseHandle(hFile);
 		return -1;
 	}
-	CloseHandle(hFile);
+	(void) CloseHandle(hFile);
 	free(szFname);
 
 	st->st_uid = 0;
@@ -422,7 +424,7 @@ int do_stat(const char *fname, STRUCT_STAT *st)
 	filesize.LowPart = fad.nFileSizeLow;
 	filesize.HighPart = fad.nFileSizeHigh;
 	st->st_size = filesize.QuadPart;
-	st->st_blocks = (st->st_size / 512ULL) + 1ULL;
+	st->st_blocks = (blkcnt_t) (((st->st_size) / 512LL) + 1LL);
 	st->st_blksize = 4096;
 	st->st_rdev = 0;
 	st->st_nlink = 0;
@@ -495,16 +497,17 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 			}
 #endif
 		}
-		CloseHandle(hFind);
+		(void) CloseHandle(hFind);
 	}
 	free(szFname);
+	szFname = NULL;
 
 	st->st_uid = 0;
 	st->st_gid = 0;
 	filesize.LowPart = fad.nFileSizeLow;
 	filesize.HighPart = fad.nFileSizeHigh;
 	st->st_size = filesize.QuadPart;
-	st->st_blocks = (st->st_size / 512ULL) + 1ULL;
+	st->st_blocks = (blkcnt_t) ((st->st_size / 512LL) + 1LL);
 	st->st_blksize = 4096;
 	st->st_rdev = 0;
 	st->st_nlink = 0;
@@ -526,7 +529,6 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 	st->st_mtime = win32_filetime_to_epoch(&fad.ftLastWriteTime);
 
 	return 0;
-
 #else
 #ifdef SUPPORT_LINKS
 # ifdef USE_STAT64_FUNCS

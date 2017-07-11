@@ -701,7 +701,7 @@ static struct file_struct *recv_file_entry(int f, struct file_list *flist, int x
 	else
 		l2 = read_byte(f);
 
-	if (l2 >= MAXPATHLEN - l1) {
+	if (l2 >= MAXPATHLEN - l1 - 1) {
 		rprintf(FERROR,
 			"overflow: xflags=0x%x l1=%d l2=%d lastname=%s [%s]\n",
 			xflags, l1, l2, lastname, who_am_i());
@@ -1702,6 +1702,9 @@ static void interpret_stat_error(const char *fname, int is_dir)
 static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 			   int flags)
 {
+	assert(flist != NULL);
+	assert(fbuf != NULL);
+
 #ifdef _IS_WINDOWS
 	WIN32_FIND_DATAW ffd;
 	DWORD dwExcludeMask = FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_INTEGRITY_STREAM | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_SYSTEM;
@@ -1721,8 +1724,6 @@ static void send_directory(int f, struct file_list *flist, char *fbuf, int len,
 	int divert_dirs = (flags & FLAG_DIVERT_DIRS) != 0;
 	int start = flist->used;
 	int filter_level = f == -2 ? SERVER_FILTERS : ALL_FILTERS;
-
-	assert(flist != NULL);
 
 #ifdef _IS_WINDOWS
 	if (!szFname) { errno = ENOMEM; return; }

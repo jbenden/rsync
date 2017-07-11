@@ -263,7 +263,7 @@ static size_t safe_read(int fd, char *buf, size_t len)
 			rprintf(FINFO, "select exception on fd %d\n", fd); */
 
 		if (FD_ISSET(fd, &r_fds)) {
-			int n = read(fd, buf + got, len - got);
+			ssize_t n = read(fd, buf + got, len - got);
 			if (DEBUG_GTE(IO, 2))
 				rprintf(FINFO, "[%s] safe_read(%d)=%ld\n", who_am_i(), fd, (long)n);
 			if (n == 0)
