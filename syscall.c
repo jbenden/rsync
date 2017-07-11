@@ -493,8 +493,8 @@ int do_lstat(const char *fname, STRUCT_STAT *st)
 					ffd.dwFileAttributes,
 					ffd.dwReserved0);
 			}
-		}
 #endif
+		}
 		CloseHandle(hFind);
 	}
 	free(szFname);
