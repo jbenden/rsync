@@ -1025,7 +1025,7 @@ typedef struct {
 #include <windows.h>
 #include <wchar.h>
 #include <stringapiset.h>
-#include <Shlwapi.h>
+#include <shlwapi.h>
 #ifndef WC_ERR_INVALID_CHARS
 #define WC_ERR_INVALID_CHARS 0x80
 #endif
